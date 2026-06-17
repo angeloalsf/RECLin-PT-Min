@@ -356,7 +356,7 @@ def main() -> int:
                 opt.step()
                 sched.step()
                 running += loss.item()
-                if step % 500 == 0:
+                if step % 20 == 0:
                     log.info("  epoca %d | passo %d/%d | loss media=%.4f",
                              ep, step, len(tr_loader), running / step)
 
