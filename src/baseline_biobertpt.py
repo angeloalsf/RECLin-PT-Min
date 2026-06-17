@@ -22,18 +22,29 @@ Metrica: macro-F1, micro-F1 e F1 por classe (sklearn). Sem bootstrap/IC por
 opcao de escopo -- o numero que interessa para "detecta bem negacao?" e o F1
 da classe `negation_of`.
 
+CHECKPOINT / RETOMADA (--ckpt-dir):
+  Ao fim de CADA epoca grava um checkpoint completo (modelo, otimizador,
+  scheduler, estados de RNG, melhor F1, melhores pesos e historico) em
+  <ckpt-dir>/checkpoint.pt, de forma ATOMICA (escreve .tmp e renomeia). Ao
+  iniciar, se o checkpoint existir, retoma da PROXIMA epoca -- pulando as ja
+  concluidas. Aponte --ckpt-dir para uma pasta no Google Drive para sobreviver
+  a quedas do runtime do Colab. Se todas as epocas ja foram feitas, pula direto
+  para a avaliacao final.
+
 Logging: tudo passa pelo logger central (src/utils/logger.py) -> terminal +
 logs/pipeline.log.
 
 Uso (CPU funciona, mas e lento; ideal GPU/Colab):
     python src/baseline_biobertpt.py --splits-dir data/splits \
         --model pucpr/biobertpt-all --epochs 3 --batch-size 32 \
-        --out results/baseline_biobertpt.json [--save-model results/model]
+        --ckpt-dir /content/drive/MyDrive/RECLin-PT-Min/checkpoints \
+        --out results/baseline_biobertpt.json
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 import time
@@ -53,6 +64,8 @@ ID2LABEL = {i: l for i, l in enumerate(LABELS)}
 
 E1_OPEN, E1_CLOSE, E2_OPEN, E2_CLOSE = "[E1]", "[/E1]", "[E2]", "[/E2]"
 MARKER_TOKENS = [E1_OPEN, E1_CLOSE, E2_OPEN, E2_CLOSE]
+
+CKPT_NAME = "checkpoint.pt"
 
 
 def read_jsonl(path):
@@ -141,18 +154,102 @@ def predict(model, loader, device):
     return preds
 
 
+# --------------------------------------------------------------------------- #
+# Checkpoint / retomada                                                        #
+# --------------------------------------------------------------------------- #
+def save_checkpoint(ckpt_dir, *, epoch, model, optimizer, scheduler,
+                    best_f1, best_state, history, args):
+    """Grava o estado completo do treino de forma atomica (.tmp -> replace)."""
+    import torch
+    ckpt_dir = Path(ckpt_dir)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    cuda_rng = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    payload = {
+        "epoch": epoch,                         # ultima epoca CONCLUIDA
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
+        "best_f1": best_f1,
+        "best_state": best_state,
+        "history": history,
+        "rng": {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch": torch.get_rng_state(),
+            "cuda": cuda_rng,
+        },
+        # guarda a config sensivel para detectar incompatibilidade na retomada
+        "config_guard": {
+            "model": args.model, "epochs": args.epochs,
+            "batch_size": args.batch_size, "max_length": args.max_length,
+            "max_gap": args.max_gap, "ctx_chars": args.ctx_chars,
+            "lr": args.lr, "seed": args.seed,
+        },
+    }
+    final = ckpt_dir / CKPT_NAME
+    tmp = ckpt_dir / (CKPT_NAME + ".tmp")
+    torch.save(payload, tmp)
+    os.replace(tmp, final)
+    log.info("Checkpoint salvo (epoca %d concluida) em %s", epoch, final)
+
+
+def load_checkpoint(ckpt_dir, *, model, optimizer, scheduler, args):
+    """Carrega o checkpoint se existir. Retorna (start_epoch, best_f1,
+    best_state, history) ou None se nao houver checkpoint compativel."""
+    import torch
+    final = Path(ckpt_dir) / CKPT_NAME
+    if not final.is_file():
+        log.info("Nenhum checkpoint em %s -- comecando do zero", final)
+        return None
+
+    ckpt = torch.load(final, map_location="cpu", weights_only=False)
+
+    guard = ckpt.get("config_guard", {})
+    mismatch = [k for k, v in {
+        "model": args.model, "epochs": args.epochs,
+        "batch_size": args.batch_size, "max_length": args.max_length,
+        "max_gap": args.max_gap, "ctx_chars": args.ctx_chars,
+        "lr": args.lr, "seed": args.seed,
+    }.items() if guard.get(k) != v]
+    if mismatch:
+        log.warning("Checkpoint encontrado mas config divergente em %s -- "
+                    "IGNORANDO checkpoint e comecando do zero.", mismatch)
+        return None
+
+    model.load_state_dict(ckpt["model"])
+    optimizer.load_state_dict(ckpt["optimizer"])
+    scheduler.load_state_dict(ckpt["scheduler"])
+    rng = ckpt.get("rng", {})
+    try:
+        random.setstate(rng["python"])
+        np.random.set_state(rng["numpy"])
+        torch.set_rng_state(rng["torch"])
+        if rng.get("cuda") is not None and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(rng["cuda"])
+    except Exception as e:  # noqa: BLE001
+        log.warning("Nao foi possivel restaurar estados de RNG: %s", e)
+
+    start_epoch = int(ckpt["epoch"]) + 1
+    log.info("Checkpoint carregado: %d epoca(s) ja concluida(s), best_dev_macro_f1=%.4f "
+             "-> retomando da epoca %d", ckpt["epoch"], ckpt["best_f1"], start_epoch)
+    return start_epoch, ckpt["best_f1"], ckpt["best_state"], ckpt["history"]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--splits-dir", default="data/splits")
     ap.add_argument("--out", default="results/baseline_biobertpt.json")
     ap.add_argument("--save-model", default=None,
                     help="Se informado, salva o melhor modelo (save_pretrained) nesta pasta.")
+    ap.add_argument("--ckpt-dir", default=None,
+                    help="Pasta para checkpoint por epoca (ideal: Google Drive). "
+                         "Habilita retomada automatica.")
     ap.add_argument("--model", default="pucpr/biobertpt-all")
     ap.add_argument("--max-gap", type=int, default=75)
     ap.add_argument("--ctx-chars", type=int, default=128)
     ap.add_argument("--max-length", type=int, default=192)
     ap.add_argument("--epochs", type=int, default=3)
-    ap.add_argument("--batch-size", type=int, default=32)
+    ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--lr", type=float, default=2e-5)
     ap.add_argument("--weight-decay", type=float, default=0.01)
     ap.add_argument("--warmup-ratio", type=float, default=0.1)
@@ -163,9 +260,9 @@ def main() -> int:
     t0 = time.time()
     log.info("=== Baseline BioBERTpt iniciado ===")
     log.info("Config: model=%s | epochs=%d | batch_size=%d | max_length=%d | "
-             "lr=%g | class_weight=%s | max_gap=%d | ctx_chars=%d | seed=%d",
+             "lr=%g | class_weight=%s | max_gap=%d | ctx_chars=%d | seed=%d | ckpt_dir=%s",
              args.model, args.epochs, args.batch_size, args.max_length, args.lr,
-             args.class_weight, args.max_gap, args.ctx_chars, args.seed)
+             args.class_weight, args.max_gap, args.ctx_chars, args.seed, args.ckpt_dir)
 
     import torch
     from sklearn.metrics import classification_report, f1_score
@@ -228,47 +325,64 @@ def main() -> int:
     log.info("Otimizador AdamW | passos totais=%d | warmup=%d",
              total, int(args.warmup_ratio * total))
 
+    # ----- retomada de checkpoint -----
+    start_epoch, best_f1, best_state, history = 1, -1.0, None, []
+    if args.ckpt_dir:
+        loaded = load_checkpoint(args.ckpt_dir, model=model, optimizer=opt,
+                                 scheduler=sched, args=args)
+        if loaded is not None:
+            start_epoch, best_f1, best_state, history = loaded
+
     ydv_str = [ID2LABEL[i] for i in ydv]
-    best_f1, best_state, history = -1.0, None, []
 
-    log.info("--- Inicio do treino (%d epocas, %d passos/epoca) ---",
-             args.epochs, len(tr_loader))
-    for ep in range(1, args.epochs + 1):
-        ep_t0 = time.time()
-        log.info("Epoca %d/%d: inicio", ep, args.epochs)
-        model.train()
-        running = 0.0
-        for step, (ids, attn, lab) in enumerate(tr_loader, 1):
-            opt.zero_grad()
-            logits = model(input_ids=ids.to(device),
-                           attention_mask=attn.to(device)).logits
-            loss = loss_fn(logits, lab.to(device))
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
-            sched.step()
-            running += loss.item()
-            if step % 20 == 0:
-                log.info("  epoca %d | passo %d/%d | loss media=%.4f",
-                         ep, step, len(tr_loader), running / step)
+    if start_epoch > args.epochs:
+        log.info("Todas as %d epocas ja concluidas (checkpoint) -- pulando treino, "
+                 "indo direto para avaliacao final.", args.epochs)
+    else:
+        log.info("--- Treino: epocas %d..%d (%d passos/epoca) ---",
+                 start_epoch, args.epochs, len(tr_loader))
+        for ep in range(start_epoch, args.epochs + 1):
+            ep_t0 = time.time()
+            log.info("Epoca %d/%d: inicio", ep, args.epochs)
+            model.train()
+            running = 0.0
+            for step, (ids, attn, lab) in enumerate(tr_loader, 1):
+                opt.zero_grad()
+                logits = model(input_ids=ids.to(device),
+                               attention_mask=attn.to(device)).logits
+                loss = loss_fn(logits, lab.to(device))
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                opt.step()
+                sched.step()
+                running += loss.item()
+                if step % 500 == 0:
+                    log.info("  epoca %d | passo %d/%d | loss media=%.4f",
+                             ep, step, len(tr_loader), running / step)
 
-        train_loss = running / max(1, len(tr_loader))
-        log.info("Epoca %d: avaliando no dev...", ep)
-        dev_pred = [ID2LABEL[i] for i in predict(model, dv_loader, device)]
-        macro = f1_score(ydv_str, dev_pred, labels=LABELS, average="macro", zero_division=0)
-        neg = f1_score(ydv_str, dev_pred, labels=["negation_of"], average="macro", zero_division=0)
-        dur = time.time() - ep_t0
-        history.append({"epoch": ep, "train_loss": train_loss,
-                        "dev_macro_f1": macro, "dev_negation_of_f1": neg,
-                        "duration_s": round(dur, 1)})
-        log.info("Epoca %d: fim | train_loss=%.4f | dev_macro_f1=%.4f | "
-                 "dev_negation_of_f1=%.4f | duracao=%.1fs",
-                 ep, train_loss, macro, neg, dur)
-        if macro > best_f1:
-            best_f1 = macro
-            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-            log.info("Epoca %d: novo MELHOR modelo (dev_macro_f1=%.4f) -- checkpoint atualizado",
-                     ep, macro)
+            train_loss = running / max(1, len(tr_loader))
+            log.info("Epoca %d: avaliando no dev...", ep)
+            dev_pred = [ID2LABEL[i] for i in predict(model, dv_loader, device)]
+            macro = f1_score(ydv_str, dev_pred, labels=LABELS, average="macro", zero_division=0)
+            neg = f1_score(ydv_str, dev_pred, labels=["negation_of"], average="macro", zero_division=0)
+            dur = time.time() - ep_t0
+            history.append({"epoch": ep, "train_loss": train_loss,
+                            "dev_macro_f1": macro, "dev_negation_of_f1": neg,
+                            "duration_s": round(dur, 1)})
+            log.info("Epoca %d: fim | train_loss=%.4f | dev_macro_f1=%.4f | "
+                     "dev_negation_of_f1=%.4f | duracao=%.1fs",
+                     ep, train_loss, macro, neg, dur)
+            if macro > best_f1:
+                best_f1 = macro
+                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                log.info("Epoca %d: novo MELHOR modelo (dev_macro_f1=%.4f) -- checkpoint atualizado",
+                         ep, macro)
+
+            # checkpoint por epoca (apos avaliar e atualizar o melhor)
+            if args.ckpt_dir:
+                save_checkpoint(args.ckpt_dir, epoch=ep, model=model, optimizer=opt,
+                                scheduler=sched, best_f1=best_f1, best_state=best_state,
+                                history=history, args=args)
 
     # ----- restaura melhor epoca e avalia no test -----
     if best_state:
