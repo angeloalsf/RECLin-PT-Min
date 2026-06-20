@@ -249,7 +249,7 @@ def main() -> int:
     ap.add_argument("--ctx-chars", type=int, default=128)
     ap.add_argument("--max-length", type=int, default=192)
     ap.add_argument("--epochs", type=int, default=3)
-    ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--lr", type=float, default=2e-5)
     ap.add_argument("--weight-decay", type=float, default=0.01)
     ap.add_argument("--warmup-ratio", type=float, default=0.1)
