@@ -1,23 +1,26 @@
 #!/usr/bin/env python3
 """
-Baseline BioBERTpt (encoder CLINICO em portugues) para extracao de relacao.
+Baseline BERTimbau (encoder GERAL em portugues) para extracao de relacao.
 
 Entry-point fino: toda a logica vive em `src/re_core.py` (compartilhado com o
-baseline BERTimbau). Aqui so escolhemos o modelo e os caminhos de saida, para
+baseline BioBERTpt). Aqui so escolhemos o modelo e os caminhos de saida, para
 que a UNICA diferenca entre os dois experimentos seja o checkpoint de pre-treino
 -- a condicao necessaria para responder, de forma valida:
 
     "O pre-treinamento clinico importa para extracao de relacoes em textos
      medicos em portugues?"
 
-BioBERTpt (`pucpr/biobertpt-all`) e o lado CLINICO da comparacao; BERTimbau
-(`neuralmind/bert-base-portuguese-cased`) e o lado GERAL.
+BERTimbau (`neuralmind/bert-base-portuguese-cased`) e o lado GERAL da comparacao
+(pre-treinado no brWaC, corpus web/geral); BioBERTpt (`pucpr/biobertpt-all`) e o
+lado CLINICO. Mesma representacao de entrada, loss, scheduler, early stopping,
+salvamento de checkpoints, metricas, seed e logging -- garantidos por usarem o
+mesmo nucleo.
 
 Uso (CPU funciona, mas e lento; ideal GPU/Colab):
-    python src/baseline_biobertpt.py --splits-dir data/splits \
+    python src/baseline_bertimbau.py --splits-dir data/splits \
         --epochs 3 --batch-size 32 \
-        --ckpt-dir /content/drive/MyDrive/RECLin-PT-Min/checkpoints \
-        --out results/baseline_biobertpt.json
+        --ckpt-dir /content/drive/MyDrive/RECLin-PT-Min/checkpoints_bertimbau \
+        --out results/baseline_bertimbau.json
 """
 from __future__ import annotations
 
@@ -28,10 +31,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from re_core import build_arg_parser, run  # noqa: E402
 from utils.logger import get_logger  # noqa: E402
 
-log = get_logger("baseline_biobertpt")
+log = get_logger("baseline_bertimbau")
 
-DEFAULT_MODEL = "pucpr/biobertpt-all"
-DEFAULT_OUT = "results/baseline_biobertpt.json"
+DEFAULT_MODEL = "neuralmind/bert-base-portuguese-cased"
+DEFAULT_OUT = "results/baseline_bertimbau.json"
 
 
 def main() -> int:
