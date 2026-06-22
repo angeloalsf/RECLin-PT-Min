@@ -26,10 +26,13 @@ ITENS MANTIDOS IDENTICOS ENTRE OS BASELINES
 - Early stopping / selecao de modelo: melhor epoca pelo macro-F1 no DEV; o TEST
   e reportado UMA unica vez.
 - Salvamento de checkpoints: `best_model/` (pesos do melhor epoch, formato HF) e
-  `last_checkpoint/` (estado completo de retomada: modelo + optimizer + scheduler
-  + RNG + epoca + historico), ambos gravados de forma ATOMICA.
-- Metricas: Micro-F1, Macro-F1, F1 por classe, classification_report (sklearn) e
-  matriz de confusao.
+  `last_checkpoint/` (estado completo de retomada), ambos gravados de forma
+  ATOMICA.
+- Metricas: Micro-F1, Macro-F1, F1 por classe, classification_report (sklearn),
+  matriz de confusao e MCC (Matthews, robusto a desbalanceamento).
+- Curvas de treino/validacao: train_loss E dev_loss por epoca no `dev_history`.
+- Predicoes do TEST salvas em um sidecar (`<out>.preds.json`) para o teste de
+  significancia (ver `src/significance.py`: McNemar + bootstrap pareado).
 - Seed de reprodutibilidade: set_all_seeds (python/numpy/torch/cuda + cudnn
   deterministico).
 - Logging estruturado centralizado: tudo passa por src/utils/logger.py ->
@@ -40,11 +43,9 @@ CHECKPOINT / RETOMADA (--ckpt-dir)
 Ao fim de CADA epoca grava `<ckpt-dir>/last_checkpoint/` com o estado completo de
 treino, de forma atomica (escreve em .tmp e renomeia). Quando uma epoca bate o
 melhor dev macro-F1, grava tambem `<ckpt-dir>/best_model/` (somente pesos, no
-formato `save_pretrained`, pronto para inferencia/compartilhamento). Ao iniciar,
-se `last_checkpoint/` existir e a config bater, retoma da PROXIMA epoca -- pulando
-as ja concluidas. Aponte --ckpt-dir para uma pasta no Google Drive para
-sobreviver a quedas do runtime do Colab. Se todas as epocas ja foram feitas, vai
-direto para a avaliacao final.
+formato `save_pretrained`). Ao iniciar, se `last_checkpoint/` existir e a config
+bater, retoma da PROXIMA epoca. Aponte --ckpt-dir para o Google Drive para
+sobreviver a quedas do runtime do Colab.
 """
 from __future__ import annotations
 
@@ -66,7 +67,7 @@ from utils.logger import get_logger  # noqa: E402
 # Logger padrao do nucleo. Cada entry-point passa o seu (com o nome do baseline)
 # para `run`, que reatribui o global abaixo -- assim o campo [MODULO] do log
 # reflete qual baseline esta rodando.
-log = get_logger("re_core")
+log = get_logger("relation_extraction")
 
 # --------------------------------------------------------------------------- #
 # Espaco de rotulos e marcadores de entidade                                  #
@@ -165,6 +166,7 @@ def make_loader(tokenizer, texts, labels, max_length, batch_size, shuffle, seed)
 
 
 def predict(model, loader, device):
+    """So predicoes (usado no TEST)."""
     import torch
     model.eval()
     preds = []
@@ -174,6 +176,23 @@ def predict(model, loader, device):
                            attention_mask=attn.to(device)).logits
             preds.extend(logits.argmax(-1).cpu().tolist())
     return preds
+
+
+def evaluate(model, loader, device, loss_fn):
+    """Predicoes + loss media (usado no DEV, para a curva de validacao)."""
+    import torch
+    model.eval()
+    preds = []
+    total_loss, n_batches = 0.0, 0
+    with torch.no_grad():
+        for ids, attn, lab in loader:
+            logits = model(input_ids=ids.to(device),
+                           attention_mask=attn.to(device)).logits
+            loss = loss_fn(logits, lab.to(device))
+            total_loss += loss.item()
+            n_batches += 1
+            preds.extend(logits.argmax(-1).cpu().tolist())
+    return preds, total_loss / max(1, n_batches)
 
 
 # --------------------------------------------------------------------------- #
@@ -294,7 +313,7 @@ def load_last_checkpoint(ckpt_dir, *, model, optimizer, scheduler, args):
 def load_best_state(ckpt_dir):
     """Le os pesos de <ckpt-dir>/best_model/ (apos retomada sem novo melhor).
     Retorna um state_dict ou None se a pasta nao existir."""
-    import torch
+    import torch  # noqa: F401
     from transformers import AutoModelForSequenceClassification
     best = Path(ckpt_dir) / BEST_MODEL_DIR
     if not (best / "config.json").is_file():
@@ -346,7 +365,7 @@ def run(args, logger=None):
 
     import torch
     from sklearn.metrics import (classification_report, confusion_matrix,
-                                 f1_score)
+                                 f1_score, matthews_corrcoef)
     from transformers import (AutoModelForSequenceClassification, AutoTokenizer,
                               get_linear_schedule_with_warmup)
 
@@ -443,16 +462,17 @@ def run(args, logger=None):
 
             train_loss = running / max(1, len(tr_loader))
             log.info("Epoca %d: avaliando no dev...", ep)
-            dev_pred = [ID2LABEL[i] for i in predict(model, dv_loader, device)]
+            dev_pred_ids, dev_loss = evaluate(model, dv_loader, device, loss_fn)
+            dev_pred = [ID2LABEL[i] for i in dev_pred_ids]
             macro = f1_score(ydv_str, dev_pred, labels=LABELS, average="macro", zero_division=0)
             neg = f1_score(ydv_str, dev_pred, labels=["negation_of"], average="macro", zero_division=0)
             dur = time.time() - ep_t0
-            history.append({"epoch": ep, "train_loss": train_loss,
+            history.append({"epoch": ep, "train_loss": train_loss, "dev_loss": dev_loss,
                             "dev_macro_f1": macro, "dev_negation_of_f1": neg,
                             "duration_s": round(dur, 1)})
-            log.info("Epoca %d: fim | train_loss=%.4f | dev_macro_f1=%.4f | "
+            log.info("Epoca %d: fim | train_loss=%.4f | dev_loss=%.4f | dev_macro_f1=%.4f | "
                      "dev_negation_of_f1=%.4f | duracao=%.1fs",
-                     ep, train_loss, macro, neg, dur)
+                     ep, train_loss, dev_loss, macro, neg, dur)
             if macro > best_f1:
                 best_f1 = macro
                 best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
@@ -467,7 +487,6 @@ def run(args, logger=None):
 
     # ----- restaura melhor epoca e avalia no test -----
     if best_state is None and args.ckpt_dir:
-        # retomamos sem bater novo melhor: recupera os pesos de best_model/
         best_state = load_best_state(args.ckpt_dir)
         if best_state is not None:
             log.info("Melhores pesos recuperados de best_model/ (sem novo melhor nesta sessao)")
@@ -476,11 +495,14 @@ def run(args, logger=None):
         log.info("Melhor modelo (dev_macro_f1=%.4f) restaurado para avaliacao final", best_f1)
 
     log.info("--- Avaliacao final no TEST ---")
-    y_pred = [ID2LABEL[i] for i in predict(model, te_loader, device)]
+    y_pred_ids = predict(model, te_loader, device)
+    y_pred = [ID2LABEL[i] for i in y_pred_ids]
     y_true = [ID2LABEL[i] for i in yte]
 
     macro = float(f1_score(y_true, y_pred, labels=LABELS, average="macro", zero_division=0))
     micro = float(f1_score(y_true, y_pred, labels=LABELS, average="micro", zero_division=0))
+    weighted = float(f1_score(y_true, y_pred, labels=LABELS, average="weighted", zero_division=0))
+    mcc = float(matthews_corrcoef(y_true, y_pred))
     per_class = f1_score(y_true, y_pred, labels=LABELS, average=None, zero_division=0)
     per_class = {l: float(per_class[i]) for i, l in enumerate(LABELS)}
     report = classification_report(y_true, y_pred, labels=LABELS, zero_division=0, output_dict=True)
@@ -495,9 +517,11 @@ def run(args, logger=None):
                    "max_length": args.max_length, "epochs": args.epochs,
                    "batch_size": args.batch_size, "lr": args.lr,
                    "class_weight": args.class_weight},
+        "n_params": int(n_params),
         "n_candidates": {"train": len(ytr), "dev": len(ydv), "test": len(yte)},
         "dev_history": history,
         "test_macro_f1": macro, "test_micro_f1": micro,
+        "test_weighted_f1": weighted, "test_mcc": mcc,
         "test_f1_per_class": per_class,
         "sklearn_report": report,
         "confusion_matrix": {"labels": LABELS, "matrix": cm_list},
@@ -507,9 +531,20 @@ def run(args, logger=None):
                                          sort_keys=True), encoding="utf-8")
     log.info("Resultados salvos em %s", args.out)
 
+    # ----- predicoes do TEST (sidecar) para o teste de significancia -----
+    preds_path = Path(args.out).with_suffix(".preds.json")
+    preds_payload = {
+        "model": args.model, "seed": args.seed, "labels": LABELS,
+        "y_true": [int(i) for i in yte],
+        "y_pred": [int(i) for i in y_pred_ids],
+    }
+    preds_path.write_text(json.dumps(preds_payload, ensure_ascii=False), encoding="utf-8")
+    log.info("Predicoes do test salvas em %s (para src/significance.py)", preds_path)
+
     # ----- resumo final -----
     log.info("=== RESULTADO (test) ===")
-    log.info("Macro-F1=%.4f | Micro-F1=%.4f", macro, micro)
+    log.info("Macro-F1=%.4f | Micro-F1=%.4f | Weighted-F1=%.4f | MCC=%.4f",
+             macro, micro, weighted, mcc)
     for l in LABELS:
         marca = "  <<< NEGACAO" if l == "negation_of" else ""
         log.info("  F1 %-18s %.4f%s", l, per_class[l], marca)

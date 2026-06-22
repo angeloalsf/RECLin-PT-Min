@@ -2,7 +2,7 @@
 """
 Baseline BERTimbau (encoder GERAL em portugues) para extracao de relacao.
 
-Entry-point fino: toda a logica vive em `src/re_core.py` (compartilhado com o
+Entry-point fino: toda a logica vive em `src/relation_extraction.py` (compartilhado com o
 baseline BioBERTpt). Aqui so escolhemos o modelo e os caminhos de saida, para
 que a UNICA diferenca entre os dois experimentos seja o checkpoint de pre-treino
 -- a condicao necessaria para responder, de forma valida:
@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from re_core import build_arg_parser, run  # noqa: E402
+from relation_extraction import build_arg_parser, run  # noqa: E402
 from utils.logger import get_logger  # noqa: E402
 
 log = get_logger("baseline_bertimbau")
