@@ -1,0 +1,100 @@
+\begin{thebibliography}{}
+
+\bibitem[Baldini~Soares et~al. 2019]{soares:19}
+Baldini~Soares, L., FitzGerald, N., Ling, J., and Kwiatkowski, T. (2019).
+\newblock Matching the blanks: Distributional similarity for relation learning.
+\newblock In {\em Proceedings of the 57th Annual Meeting of the Association for
+  Computational Linguistics (ACL)}, pages 2895--2905. Association for
+  Computational Linguistics.
+
+\bibitem[Chapman et~al. 2001]{chapman:01}
+Chapman, W.~W., Bridewell, W., Hanbury, P., Cooper, G.~F., and Buchanan, B.~G.
+  (2001).
+\newblock A simple algorithm for identifying negated findings and diseases in
+  discharge summaries.
+\newblock {\em Journal of Biomedical Informatics}, 34(5):301--310.
+
+\bibitem[Conneau et~al. 2020]{conneau:20}
+Conneau, A., Khandelwal, K., Goyal, N., Chaudhary, V., Wenzek, G., Guzm{\'a}n,
+  F., Grave, E., Ott, M., Zettlemoyer, L., and Stoyanov, V. (2020).
+\newblock Unsupervised cross-lingual representation learning at scale.
+\newblock In {\em Proceedings of the 58th Annual Meeting of the Association for
+  Computational Linguistics (ACL)}, pages 8440--8451. Association for
+  Computational Linguistics.
+
+\bibitem[Devlin et~al. 2019]{devlin:19}
+Devlin, J., Chang, M.-W., Lee, K., and Toutanova, K. (2019).
+\newblock {BERT}: Pre-training of deep bidirectional transformers for language
+  understanding.
+\newblock In {\em Proceedings of the 2019 Conference of the North American
+  Chapter of the Association for Computational Linguistics (NAACL-HLT)}, pages
+  4171--4186. Association for Computational Linguistics.
+
+\bibitem[Dietterich 1998]{dietterich:98}
+Dietterich, T.~G. (1998).
+\newblock Approximate statistical tests for comparing supervised classification
+  learning algorithms.
+\newblock {\em Neural Computation}, 10(7):1895--1923.
+
+\bibitem[Forman and Scholz 2010]{forman:10}
+Forman, G. and Scholz, M. (2010).
+\newblock Apples-to-apples in cross-validation studies: pitfalls in classifier
+  performance measurement.
+\newblock {\em ACM SIGKDD Explorations Newsletter}, 12(1):49--57.
+
+\bibitem[Lee et~al. 2020]{lee:20}
+Lee, J., Yoon, W., Kim, S., Kim, D., Kim, S., So, C.~H., and Kang, J. (2020).
+\newblock {BioBERT}: a pre-trained biomedical language representation model for
+  biomedical text mining.
+\newblock {\em Bioinformatics}, 36(4):1234--1240.
+
+\bibitem[McCray et~al. 2001]{mccray:01}
+McCray, A.~T., Burgun, A., and Bodenreider, O. (2001).
+\newblock Aggregating {UMLS} semantic types for reducing conceptual complexity.
+\newblock {\em Studies in Health Technology and Informatics}, 84:216--220.
+
+\bibitem[Oliveira et~al. 2022]{oliveira:22}
+Oliveira, L. E.~S., Peters, A.~C., da~Silva, A. M.~P., Gebeluca, C.~P., Gumiel,
+  Y.~B., Cintho, L. M.~M., Carvalho, D.~R., Al~Hasan, S., and Moro, C. M.~C.
+  (2022).
+\newblock {SemClinBr} -- a multi-institutional and multi-specialty semantically
+  annotated corpus for {Portuguese} clinical {NLP} tasks.
+\newblock {\em Journal of Biomedical Semantics}, 13(1):13.
+
+\bibitem[Schneider et~al. 2020]{schneider:20}
+Schneider, E. T.~R., de~Souza, J. V.~A., Knafou, J., Oliveira, L. E.~S.,
+  Copara, J., Gumiel, Y.~B., Oliveira, L. F.~A., Paraiso, E.~C., Teodoro, D.,
+  and Barbosa, C. M. C.~M. (2020).
+\newblock {BioBERTpt} -- a {Portuguese} neural language model for clinical
+  named entity recognition.
+\newblock In {\em Proceedings of the 3rd Clinical Natural Language Processing
+  Workshop}, pages 65--72. Association for Computational Linguistics.
+
+\bibitem[Sechidis et~al. 2011]{sechidis:11}
+Sechidis, K., Tsoumakas, G., and Vlahavas, I. (2011).
+\newblock On the stratification of multi-label data.
+\newblock In {\em Machine Learning and Knowledge Discovery in Databases (ECML
+  PKDD 2011)}, volume 6913 of {\em Lecture Notes in Computer Science}, pages
+  145--158. Springer.
+
+\bibitem[Souza et~al. 2020]{souza:20}
+Souza, F., Nogueira, R., and Lotufo, R. (2020).
+\newblock {BERTimbau}: Pretrained {BERT} models for {Brazilian Portuguese}.
+\newblock In {\em Intelligent Systems (BRACIS 2020)}, volume 12319 of {\em
+  Lecture Notes in Computer Science}, pages 403--417. Springer.
+
+\bibitem[Uzuner et~al. 2011]{uzuner:11}
+Uzuner, {\"O}., South, B.~R., Shen, S., and DuVall, S.~L. (2011).
+\newblock 2010 {i2b2/VA} challenge on concepts, assertions, and relations in
+  clinical text.
+\newblock {\em Journal of the American Medical Informatics Association},
+  18(5):552--556.
+
+\bibitem[Vaswani et~al. 2017]{vaswani:17}
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.~N.,
+  Kaiser, {\L}., and Polosukhin, I. (2017).
+\newblock Attention is all you need.
+\newblock In {\em Advances in Neural Information Processing Systems (NeurIPS)},
+  volume~30.
+
+\end{thebibliography}
